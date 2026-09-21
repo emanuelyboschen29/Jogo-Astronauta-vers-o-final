@@ -1,0 +1,418 @@
+// ======================================================
+// jogo.js — Motor do jogo (cenário, física, inimigos, HUD, loop)
+// Usa as funções de astronauta.js (moverParaDireita, pular, atacar...).
+// ======================================================
+
+const telaDoJogo = document.getElementById("gameCanvas");
+const contextoDoCanvas = telaDoJogo.getContext("2d");
+
+const LARGURA_DO_NIVEL = 2600;
+const POSICAO_DO_CHAO = telaDoJogo.height - 70;
+const GRAVIDADE = 0.75;
+
+jogador.posicaoY = POSICAO_DO_CHAO - jogador.altura;
+
+let posicaoDaCamera = 0;
+let momentoDoUltimoFrame = 0;
+let jogoEncerrado = false;
+
+// ---------- Fundo (estrelas e planetas) ----------
+const estrelas = Array.from({ length: 100 }, () => ({
+    posicaoX: Math.random() * LARGURA_DO_NIVEL,
+    posicaoY: Math.random() * (POSICAO_DO_CHAO - 20),
+    tamanho: Math.random() * 1.6 + 0.5,
+    fase: Math.random() * Math.PI * 2,
+}));
+
+const planetasDeFundo = [
+    { posicaoX: 260,  posicaoY: 90,  raio: 42, cor: "#c96b4a" },
+    { posicaoX: 980,  posicaoY: 120, raio: 58, cor: "#4a7cc9" },
+    { posicaoX: 1650, posicaoY: 80,  raio: 36, cor: "#8f5ac9" },
+    { posicaoX: 2280, posicaoY: 140, raio: 50, cor: "#c9a24a" },
+];
+
+// ---------- Inimigos (aliens do Cenário 1) ----------
+
+function criarInimigos() {
+    const posicoesIniciais = [520, 800, 1120, 1440, 1760, 2080];
+
+    return posicoesIniciais.map((posicaoInicial, indice) => ({
+        posicaoX: posicaoInicial,
+        posicaoY: POSICAO_DO_CHAO - 36,
+        largura: 36,
+        altura: 36,
+        vida: 30,
+        vidaMaxima: 30,
+        vivo: true,
+        limiteEsquerdo: posicaoInicial - 70,
+        limiteDireito: posicaoInicial + 70,
+        direcao: 1,
+        velocidade: 1.0 + (indice % 3) * 0.25,
+        tempoDeAnimacao: Math.random() * Math.PI * 2,
+    }));
+}
+
+let inimigos = criarInimigos();
+
+// ---------- Colisão e golpe ----------
+
+function retangulosColidem(aX, aY, aLargura, aAltura, bX, bY, bLargura, bAltura) {
+    return (
+        aX < bX + bLargura &&
+        aX + aLargura > bX &&
+        aY < bY + bAltura &&
+        aY + aAltura > bY
+    );
+}
+
+function aplicarGolpeEmInimigos() {
+    const alcanceDoGolpe = 50;
+    const posicaoXDoGolpe =
+        jogador.olhandoPara === 1
+            ? jogador.posicaoX + jogador.largura
+            : jogador.posicaoX - alcanceDoGolpe;
+
+    inimigos.forEach((inimigo) => {
+        if (!inimigo.vivo) return;
+
+        const acertou = retangulosColidem(
+            posicaoXDoGolpe, jogador.posicaoY, alcanceDoGolpe, jogador.altura,
+            inimigo.posicaoX, inimigo.posicaoY, inimigo.largura, inimigo.altura
+        );
+
+        if (!acertou) return;
+
+        inimigo.vida -= 15;
+        if (inimigo.vida <= 0) inimigo.vivo = false;
+    });
+}
+
+// ---------- Entrada do teclado ----------
+
+const teclasPressionadas = {};
+
+document.addEventListener("keydown", (evento) => {
+    teclasPressionadas[evento.key] = true;
+
+    if (evento.key === "ArrowUp" || evento.key === " ") pular();
+    if (evento.key === "x" || evento.key === "X") atacar();
+});
+
+document.addEventListener("keyup", (evento) => {
+    teclasPressionadas[evento.key] = false;
+});
+
+// Sprint: Shift (qualquer um dos dois) segurado enquanto anda.
+function teclaDeSprintEstaPressionada() {
+    return teclasPressionadas["Shift"] === true;
+}
+
+function processarEntradaDoJogador() {
+    if (jogador.estado === "atacando" || jogador.estado === "morto") return;
+
+    definirSprintDesejado(teclaDeSprintEstaPressionada());
+
+    if (teclasPressionadas["ArrowRight"]) {
+        moverParaDireita();
+    } else if (teclasPressionadas["ArrowLeft"]) {
+        moverParaEsquerda();
+    } else {
+        ficarParado();
+    }
+}
+
+// ---------- Física ----------
+
+function atualizarFisicaDoJogador(tempoDecorrido) {
+    const fatorDeEscala = tempoDecorrido / 16.67;
+
+    // Movimento horizontal
+    jogador.posicaoX += jogador.velocidadeX * fatorDeEscala;
+    jogador.posicaoX = Math.max(0, Math.min(LARGURA_DO_NIVEL - jogador.largura, jogador.posicaoX));
+
+    // Movimento vertical (só cai se não estiver no chão)
+    if (jogador.estaNoChao) return;
+
+    jogador.velocidadeY += GRAVIDADE * fatorDeEscala;
+    jogador.posicaoY += jogador.velocidadeY * fatorDeEscala;
+
+    const posicaoDoChaoDoJogador = POSICAO_DO_CHAO - jogador.altura;
+    if (jogador.posicaoY < posicaoDoChaoDoJogador) return;
+
+    // Aterrissou
+    jogador.posicaoY = posicaoDoChaoDoJogador;
+    jogador.velocidadeY = 0;
+    jogador.estaNoChao = true;
+
+    if (jogador.estado === "pulando") {
+        jogador.estado = jogador.velocidadeX !== 0 ? "andando" : "parado";
+    }
+}
+
+// ---------- Inimigos ----------
+
+function atualizarInimigos(tempoDecorrido) {
+    const fatorDeEscala = tempoDecorrido / 16.67;
+
+    inimigos.forEach((inimigo) => {
+        if (!inimigo.vivo) return;
+
+        // Movimento de vaivém
+        inimigo.posicaoX += inimigo.direcao * inimigo.velocidade * fatorDeEscala;
+        if (inimigo.posicaoX < inimigo.limiteEsquerdo || inimigo.posicaoX > inimigo.limiteDireito) {
+            inimigo.direcao *= -1;
+        }
+
+        inimigo.tempoDeAnimacao += 0.05 * fatorDeEscala;
+
+        verificarDanoPorContato(inimigo);
+    });
+}
+
+function verificarDanoPorContato(inimigo) {
+    if (performance.now() < jogador.invencivelAte) return;
+    if (jogador.estado === "morto") return;
+
+    const encostou = retangulosColidem(
+        jogador.posicaoX, jogador.posicaoY, jogador.largura, jogador.altura,
+        inimigo.posicaoX, inimigo.posicaoY, inimigo.largura, inimigo.altura
+    );
+
+    if (encostou) tomarDano(10);
+}
+
+// ---------- Câmera ----------
+
+function atualizarCamera() {
+    const posicaoAlvo = jogador.posicaoX - telaDoJogo.width / 2 + jogador.largura / 2;
+    const posicaoMaxima = LARGURA_DO_NIVEL - telaDoJogo.width;
+
+    posicaoDaCamera = Math.max(0, Math.min(posicaoMaxima, posicaoAlvo));
+}
+
+// ---------- Desenho ----------
+
+function desenharFundo() {
+    desenharCeuGradiente();
+    desenharPlanetas();
+    desenharEstrelas();
+    desenharChao();
+}
+
+function desenharCeuGradiente() {
+    const gradiente = contextoDoCanvas.createLinearGradient(0, 0, 0, telaDoJogo.height);
+    gradiente.addColorStop(0, "#050014");
+    gradiente.addColorStop(1, "#160a38");
+
+    contextoDoCanvas.fillStyle = gradiente;
+    contextoDoCanvas.fillRect(0, 0, telaDoJogo.width, telaDoJogo.height);
+}
+
+function desenharPlanetas() {
+    planetasDeFundo.forEach((planeta) => {
+        const posicaoXNaTela = planeta.posicaoX - posicaoDaCamera * 0.4;
+
+        if (posicaoXNaTela < -100 || posicaoXNaTela > telaDoJogo.width + 100) return;
+
+        const gradiente = contextoDoCanvas.createRadialGradient(
+            posicaoXNaTela - planeta.raio * 0.3,
+            planeta.posicaoY - planeta.raio * 0.3,
+            planeta.raio * 0.1,
+            posicaoXNaTela,
+            planeta.posicaoY,
+            planeta.raio
+        );
+        gradiente.addColorStop(0, "#ffffff55");
+        gradiente.addColorStop(1, planeta.cor);
+
+        contextoDoCanvas.fillStyle = gradiente;
+        contextoDoCanvas.beginPath();
+        contextoDoCanvas.arc(posicaoXNaTela, planeta.posicaoY, planeta.raio, 0, Math.PI * 2);
+        contextoDoCanvas.fill();
+    });
+}
+
+function desenharEstrelas() {
+    const momentoAtual = performance.now();
+
+    estrelas.forEach((estrela) => {
+        const posicaoXNaTela = estrela.posicaoX - posicaoDaCamera * 0.7;
+
+        if (posicaoXNaTela < 0 || posicaoXNaTela > telaDoJogo.width) return;
+
+        contextoDoCanvas.globalAlpha = 0.4 + 0.6 * Math.abs(Math.sin(momentoAtual / 700 + estrela.fase));
+        contextoDoCanvas.fillStyle = "#ffffff";
+        contextoDoCanvas.fillRect(posicaoXNaTela, estrela.posicaoY, estrela.tamanho, estrela.tamanho);
+        contextoDoCanvas.globalAlpha = 1;
+    });
+}
+
+function desenharChao() {
+    contextoDoCanvas.fillStyle = "#1b0f33";
+    contextoDoCanvas.fillRect(0, POSICAO_DO_CHAO, telaDoJogo.width, telaDoJogo.height - POSICAO_DO_CHAO);
+
+    contextoDoCanvas.strokeStyle = "#8a5cff";
+    contextoDoCanvas.lineWidth = 2;
+    contextoDoCanvas.beginPath();
+    contextoDoCanvas.moveTo(0, POSICAO_DO_CHAO);
+    contextoDoCanvas.lineTo(telaDoJogo.width, POSICAO_DO_CHAO);
+    contextoDoCanvas.stroke();
+}
+
+function desenharInimigos() {
+    inimigos.forEach((inimigo) => {
+        if (!inimigo.vivo) return;
+
+        const posicaoXNaTela = inimigo.posicaoX - posicaoDaCamera;
+        if (posicaoXNaTela < -50 || posicaoXNaTela > telaDoJogo.width + 50) return;
+
+        desenharCorpoDoInimigo(inimigo, posicaoXNaTela);
+        desenharBarraDeVidaDoInimigo(inimigo, posicaoXNaTela);
+    });
+}
+
+function desenharCorpoDoInimigo(inimigo, posicaoXNaTela) {
+    const pulinho = Math.sin(inimigo.tempoDeAnimacao) * 4;
+
+    contextoDoCanvas.save();
+    contextoDoCanvas.translate(
+        posicaoXNaTela + inimigo.largura / 2,
+        inimigo.posicaoY + inimigo.altura / 2 + pulinho
+    );
+
+    const gradiente = contextoDoCanvas.createRadialGradient(0, 0, 2, 0, 0, inimigo.largura / 2);
+    gradiente.addColorStop(0, "#ff9a9a");
+    gradiente.addColorStop(1, "#a30f2b");
+
+    contextoDoCanvas.fillStyle = gradiente;
+    contextoDoCanvas.beginPath();
+    contextoDoCanvas.arc(0, 0, inimigo.largura / 2, 0, Math.PI * 2);
+    contextoDoCanvas.fill();
+
+    // Olhinhos
+    contextoDoCanvas.fillStyle = "#2b0510";
+    contextoDoCanvas.beginPath(); contextoDoCanvas.arc(-6, -2, 3.5, 0, Math.PI * 2); contextoDoCanvas.fill();
+    contextoDoCanvas.beginPath(); contextoDoCanvas.arc( 6, -2, 3.5, 0, Math.PI * 2); contextoDoCanvas.fill();
+
+    contextoDoCanvas.restore();
+}
+
+function desenharBarraDeVidaDoInimigo(inimigo, posicaoXNaTela) {
+    const porcentagemDeVida = inimigo.vida / inimigo.vidaMaxima;
+
+    contextoDoCanvas.fillStyle = "rgba(0,0,0,0.6)";
+    contextoDoCanvas.fillRect(posicaoXNaTela, inimigo.posicaoY - 10, inimigo.largura, 5);
+
+    contextoDoCanvas.fillStyle = "#ff4d5e";
+    contextoDoCanvas.fillRect(posicaoXNaTela, inimigo.posicaoY - 10, inimigo.largura * porcentagemDeVida, 5);
+}
+
+function desenharPainelDoJogador() {
+    desenharCoracoes();
+    desenharBarraDeProgresso();
+}
+
+function desenharCoracoes() {
+    const totalDeCoracoes = 5;
+    const vidaPorCoracao = jogador.vidaMaxima / totalDeCoracoes;
+
+    contextoDoCanvas.font = "22px sans-serif";
+
+    for (let indice = 0; indice < totalDeCoracoes; indice++) {
+        const preenchido = jogador.vida > indice * vidaPorCoracao;
+        contextoDoCanvas.fillText(preenchido ? "❤️" : "🖤", 14 + indice * 28, 30);
+    }
+}
+
+function desenharBarraDeProgresso() {
+    const progresso = Math.max(0, Math.min(1, jogador.posicaoX / (LARGURA_DO_NIVEL - jogador.largura)));
+    const posicaoXDaBarra = telaDoJogo.width - 216;
+    const larguraDaBarra = 200;
+    const alturaDaBarra = 14;
+
+    contextoDoCanvas.fillStyle = "rgba(0,0,0,0.4)";
+    contextoDoCanvas.fillRect(posicaoXDaBarra, 14, larguraDaBarra, alturaDaBarra);
+
+    contextoDoCanvas.fillStyle = "#7dd3fc";
+    contextoDoCanvas.fillRect(posicaoXDaBarra, 14, larguraDaBarra * progresso, alturaDaBarra);
+
+    contextoDoCanvas.strokeStyle = "rgba(255,255,255,0.7)";
+    contextoDoCanvas.strokeRect(posicaoXDaBarra, 14, larguraDaBarra, alturaDaBarra);
+}
+
+// ---------- Fim de jogo ----------
+
+function mostrarTela(idDaTela) {
+    document.querySelectorAll(".tela-overlay").forEach((elemento) => {
+        elemento.classList.add("escondida");
+    });
+    document.getElementById(idDaTela).classList.remove("escondida");
+}
+
+function verificarFimDeJogo() {
+    if (jogoEncerrado) return;
+
+    if (jogador.vida <= 0) {
+        jogoEncerrado = true;
+        mostrarTela("tela-derrota");
+        return;
+    }
+
+    const chegouNoFinal = jogador.posicaoX >= LARGURA_DO_NIVEL - jogador.largura - 10;
+    if (chegouNoFinal) {
+        jogoEncerrado = true;
+        mostrarTela("tela-vitoria");
+    }
+}
+
+function reiniciarJogo() {
+    jogador.posicaoX = 60;
+    jogador.posicaoY = POSICAO_DO_CHAO - jogador.altura;
+    jogador.velocidadeX = 0;
+    jogador.velocidadeY = 0;
+    jogador.estaNoChao = true;
+    jogador.estado = "parado";
+    jogador.estadoAnterior = "parado";
+    jogador.vida = jogador.vidaMaxima;
+    jogador.invencivelAte = 0;
+    jogador.olhandoPara = 1;
+    jogador.sprintDesejado = false;
+    jogador.indiceDoFrame = 0;
+    jogador.tempoNoFrame = 0;
+    animacaoDeSprint.frame = 0;
+    animacaoDeSprint.timer = 0;
+
+    inimigos = criarInimigos();
+    jogoEncerrado = false;
+
+    document.querySelectorAll(".tela-overlay").forEach((elemento) => {
+        elemento.classList.add("escondida");
+    });
+}
+
+// ---------- Loop principal ----------
+
+function loopPrincipal(momentoAtual) {
+    const tempoDecorrido = Math.min(40, momentoAtual - momentoDoUltimoFrame || 16.67);
+    momentoDoUltimoFrame = momentoAtual;
+
+    if (!jogoEncerrado) {
+        processarEntradaDoJogador();
+        atualizarFisicaDoJogador(tempoDecorrido);
+        atualizarAnimacaoDoJogador(tempoDecorrido);
+        atualizarInimigos(tempoDecorrido);
+        atualizarCamera();
+    }
+
+    contextoDoCanvas.clearRect(0, 0, telaDoJogo.width, telaDoJogo.height);
+    desenharFundo();
+    desenharInimigos();
+    desenharJogador(contextoDoCanvas, posicaoDaCamera);
+    desenharPainelDoJogador();
+
+    verificarFimDeJogo();
+
+    requestAnimationFrame(loopPrincipal);
+}
+
+requestAnimationFrame(loopPrincipal);

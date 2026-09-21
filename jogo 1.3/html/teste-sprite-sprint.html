@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teste das sprite sheets (sprint e ataque)</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 24px;
+            background: #0b0520;
+            color: #e8e4ff;
+            font-family: system-ui, "Segoe UI", sans-serif;
+        }
+
+        h1 { font-size: 20px; margin: 0 0 4px; }
+        h2 { font-size: 15px; margin: 26px 0 8px; color: #c9b8ff; }
+        p  { margin: 0 0 16px; color: #a99dd0; font-size: 13px; max-width: 760px; }
+
+        canvas { background: #160a38; border-radius: 8px; display: block; }
+
+        .painel {
+            background: #170c33;
+            border: 1px solid #33215e;
+            border-radius: 10px;
+            padding: 14px 16px;
+            margin-bottom: 18px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            align-items: center;
+        }
+
+        label { font-size: 12px; display: flex; flex-direction: column; gap: 4px; }
+        label span { color: #c9b8ff; }
+        input[type="range"] { width: 150px; }
+
+        button {
+            padding: 8px 18px;
+            border: none;
+            border-radius: 6px;
+            background: #8a5cff;
+            color: #fff;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        button:hover { background: #a37bff; }
+
+        #relatorio {
+            font-family: ui-monospace, Consolas, monospace;
+            font-size: 12px;
+            line-height: 1.7;
+            background: #0d0622;
+            border: 1px solid #33215e;
+            border-radius: 8px;
+            padding: 12px 14px;
+            white-space: pre-wrap;
+        }
+
+        .ok    { color: #6ee7a8; }
+        .falha { color: #ff7b93; }
+        .dupla { display: flex; gap: 18px; flex-wrap: wrap; }
+    </style>
+</head>
+
+<body>
+
+    <h1>Teste das sprite sheets do astronauta</h1>
+    <p>
+        Esta página processa a sheet exatamente como o jogo faz e mostra o resultado sobre o fundo
+        do cenário. Se aparecer preto em volta do astronauta aqui, vai aparecer no jogo também.
+        Ajuste os controles até ficar limpo e copie os valores para <code>AJUSTES_DO_FUNDO</code>, em
+        <code>js/sprites.js</code>.
+    </p>
+
+    <div class="painel">
+        <label>
+            <span>Sprite sheet</span>
+            <select id="qualSheet" style="padding:6px;border-radius:5px;border:1px solid #33215e;background:#0d0622;color:#e8e4ff">
+                <option value="correndo">correndo (sprint / portal)</option>
+                <option value="atacando">atacando (espada)</option>
+            </select>
+        </label>
+        <label>
+            <span>Raio de proteção: <b id="valorRaio">8</b></span>
+            <input type="range" id="raioInterior" min="2" max="40" value="8">
+        </label>
+        <label>
+            <span>Limiar de luminância: <b id="valorLuminancia">30</b></span>
+            <input type="range" id="limiarLuminancia" min="5" max="90" value="30">
+        </label>
+        <label>
+            <span>Limiar de saturação: <b id="valorSaturacao">20</b></span>
+            <input type="range" id="limiarSaturacao" min="0" max="80" value="20">
+        </label>
+        <label>
+            <span>Direções p/ interior: <b id="valorDirecoes">3</b></span>
+            <input type="range" id="direcoesInterior" min="2" max="4" value="3">
+        </label>
+        <label>
+            <span>Suavizar bordas</span>
+            <input type="checkbox" id="suavizar" checked>
+        </label>
+        <button id="reprocessar">Reprocessar</button>
+    </div>
+
+    <div id="relatorio">carregando…</div>
+
+    <h2>Animação como ela vai rodar no jogo</h2>
+    <div class="dupla">
+        <canvas id="telaAnimacao" width="320" height="260"></canvas>
+        <label style="justify-content:center">
+            <span>Velocidade (frameDuration): <b id="valorVelocidade">60</b> ms</span>
+            <input type="range" id="velocidade" min="16" max="200" value="60">
+        </label>
+    </div>
+
+    <h2>Os 25 frames recortados (sobre o fundo do cenário)</h2>
+    <canvas id="telaFrames" width="900" height="720"></canvas>
+
+    <h2>Sheet original (com fundo preto) × sheet processada</h2>
+    <div class="dupla">
+        <canvas id="telaOriginal" width="420" height="420"></canvas>
+        <canvas id="telaProcessada" width="420" height="420"></canvas>
+    </div>
+
+    <script src="../js/sprites.js"></script>
+    <script>
+        let NOME = "correndo";
+        const relatorio = document.getElementById("relatorio");
+
+        function esperarSprite() {
+            const sprite = BANCO_DE_SPRITES[NOME];
+
+            if (sprite.pronta && sprite.imagem) {
+                aoFicarPronta();
+                return;
+            }
+            if (!sprite.imagem && !sprite.pronta) {
+                setTimeout(esperarSprite, 120);
+                return;
+            }
+            setTimeout(esperarSprite, 120);
+        }
+
+        setTimeout(function verificarArquivo() {
+            const sprite = BANCO_DE_SPRITES[NOME];
+            if (sprite.imagem) return;
+
+            relatorio.innerHTML =
+                '<span class="falha">Não encontrei a sprite sheet.</span>\n\n' +
+                "Esperado em: " + BANCO_DE_SPRITES[NOME].caminho + "\n" +
+                "Ou seja, o arquivo img/sprite-sprint-portal-spritesheet.png\n\n" +
+                "Confira o nome do arquivo (maiúsculas/minúsculas contam) e rode por um servidor local.";
+        }, 2500);
+
+        function aoFicarPronta() {
+            desenharRelatorio();
+            desenharSheets();
+            desenharFrames();
+            requestAnimationFrame(animar);
+        }
+
+        function desenharRelatorio() {
+            const sprite = BANCO_DE_SPRITES[NOME];
+            const largura = sprite.imagem.naturalWidth;
+            const altura = sprite.imagem.naturalHeight;
+            const gradeFecha =
+                sprite.larguraDaCelula * sprite.colunas === largura &&
+                sprite.alturaDaCelula * sprite.linhas === altura;
+
+            const cantosLimpos = conferirCantos(sprite);
+
+            relatorio.innerHTML =
+                "arquivo .............. " + sprite.caminho + "\n" +
+                "tamanho .............. " + largura + " x " + altura + " px\n" +
+                "grade ................ " + sprite.colunas + " colunas x " + sprite.linhas + " linhas = " +
+                    sprite.totalDeFrames + " frames\n" +
+                "célula de cada frame . " + sprite.larguraDaCelula + " x " + sprite.alturaDaCelula + " px\n" +
+                "recorte uniforme ..... x:" + sprite.recorte.x + " y:" + sprite.recorte.y +
+                    " " + sprite.recorte.largura + "x" + sprite.recorte.altura + " (igual nos 25 frames)\n" +
+                "modo de emergência ... " + (sprite.usarMisturaAditiva ? "SIM (rode por servidor local!)" : "não") + "\n\n" +
+                marcar(sprite.totalDeFrames === 25, "25 frames detectados") + "\n" +
+                marcar(gradeFecha, "a grade divide a imagem sem sobra") + "\n" +
+                marcar(cantosLimpos, "cantos dos 25 frames transparentes (sem quadrado preto)");
+        }
+
+        function marcar(condicao, texto) {
+            const classe = condicao ? "ok" : "falha";
+            const simbolo = condicao ? "[ OK ]  " : "[FALHA] ";
+            return '<span class="' + classe + '">' + simbolo + texto + "</span>";
+        }
+
+        // Lê os 4 cantos de cada frame na sheet processada. Todos devem estar transparentes.
+        function conferirCantos(sprite) {
+            if (!sprite.telaProcessada) return false;
+
+            const contexto = sprite.telaProcessada.getContext("2d", { willReadFrequently: true });
+
+            for (let linha = 0; linha < sprite.linhas; linha++) {
+                for (let coluna = 0; coluna < sprite.colunas; coluna++) {
+                    const x = coluna * sprite.larguraDaCelula;
+                    const y = linha * sprite.alturaDaCelula;
+                    const direita = x + sprite.larguraDaCelula - 1;
+                    const baixo = y + sprite.alturaDaCelula - 1;
+
+                    const pontos = [[x, y], [direita, y], [x, baixo], [direita, baixo]];
+                    for (const [px, py] of pontos) {
+                        if (contexto.getImageData(px, py, 1, 1).data[3] !== 0) return false;
+                    }
+                }
+            }
+            return true;
+        }
+
+        function desenharSheets() {
+            const sprite = BANCO_DE_SPRITES[NOME];
+            desenharEncaixado("telaOriginal", sprite.imagem, "#000000");
+            desenharEncaixado("telaProcessada", sprite.telaProcessada || sprite.imagem, "#160a38");
+        }
+
+        function desenharEncaixado(idDaTela, fonte, corDeFundo) {
+            const tela = document.getElementById(idDaTela);
+            const contexto = tela.getContext("2d");
+
+            contexto.fillStyle = corDeFundo;
+            contexto.fillRect(0, 0, tela.width, tela.height);
+
+            const largura = fonte.naturalWidth || fonte.width;
+            const altura = fonte.naturalHeight || fonte.height;
+            const escala = Math.min(tela.width / largura, tela.height / altura);
+
+            contexto.drawImage(fonte, 0, 0, largura, altura,
+                (tela.width - largura * escala) / 2, (tela.height - altura * escala) / 2,
+                largura * escala, altura * escala);
+        }
+
+        function desenharFrames() {
+            const tela = document.getElementById("telaFrames");
+            const contexto = tela.getContext("2d");
+            const larguraDaCaixa = 180;
+            const alturaDaCaixa = 144;
+
+            contexto.fillStyle = "#160a38";
+            contexto.fillRect(0, 0, tela.width, tela.height);
+
+            for (let indice = 0; indice < totalDeFramesDaSprite(NOME); indice++) {
+                const recorte = obterRecorteDoFrame(NOME, indice);
+                const caixaX = (indice % 5) * larguraDaCaixa;
+                const caixaY = Math.floor(indice / 5) * alturaDaCaixa;
+
+                const escala = Math.min(
+                    (larguraDaCaixa - 16) / recorte.largura,
+                    (alturaDaCaixa - 24) / recorte.altura
+                );
+                const largura = recorte.largura * escala;
+                const altura = recorte.altura * escala;
+
+                contexto.drawImage(recorte.fonte,
+                    recorte.origemX, recorte.origemY, recorte.largura, recorte.altura,
+                    caixaX + (larguraDaCaixa - largura) / 2,
+                    caixaY + (alturaDaCaixa - altura) / 2,
+                    largura, altura);
+
+                contexto.fillStyle = "rgba(255,255,255,0.45)";
+                contexto.font = "11px monospace";
+                contexto.fillText(String(indice), caixaX + 8, caixaY + 16);
+            }
+        }
+
+        // ---------- Animação ao vivo, com a mesma lógica do jogo ----------
+        const animacao = { frame: 0, timer: 0, frameDuration: 60 };
+        let momentoAnterior = 0;
+
+        function animar(momentoAtual) {
+            const tempoDecorrido = Math.min(40, momentoAtual - momentoAnterior || 16.67);
+            momentoAnterior = momentoAtual;
+
+            animacao.timer += tempoDecorrido;
+            if (animacao.timer >= animacao.frameDuration) {
+                animacao.timer -= animacao.frameDuration;
+                animacao.frame = (animacao.frame + 1) % totalDeFramesDaSprite(NOME);
+            }
+
+            const tela = document.getElementById("telaAnimacao");
+            const contexto = tela.getContext("2d");
+
+            contexto.fillStyle = "#160a38";
+            contexto.fillRect(0, 0, tela.width, tela.height);
+            contexto.strokeStyle = "#8a5cff";
+            contexto.beginPath();
+            contexto.moveTo(0, 220);
+            contexto.lineTo(tela.width, 220);
+            contexto.stroke();
+
+            const recorte = obterRecorteDoFrame(NOME, animacao.frame);
+            if (recorte) {
+                // Mesmas contas do jogo: 96x96 de caixa, ancorado no centro e nos pés.
+                const largura = 96 * recorte.escalaDeDesenho;
+                const altura = 96 * recorte.escalaDeDesenho;
+
+                contexto.imageSmoothingEnabled = true;
+                contexto.imageSmoothingQuality = "high";
+
+                // caixa de colisão do jogador, pra conferir alinhamento
+                contexto.strokeStyle = "rgba(125,211,252,0.5)";
+                contexto.strokeRect(tela.width / 2 - 48, 220 - 96, 96, 96);
+
+                contexto.drawImage(recorte.fonte,
+                    recorte.origemX, recorte.origemY, recorte.largura, recorte.altura,
+                    Math.round(tela.width / 2 - largura / 2 + recorte.deslocamentoX),
+                    Math.round(220 - altura + recorte.deslocamentoY),
+                    largura, altura);
+            }
+
+            requestAnimationFrame(animar);
+        }
+
+        // ---------- Controles ----------
+        const controles = {
+            limiarLuminancia: "limiarDeLuminancia",
+            limiarSaturacao: "limiarDeSaturacao",
+            direcoesInterior: "direcoesMinimasParaInterior",
+            raioInterior: "raioDeProtecaoDoInterior",
+        };
+
+        document.getElementById("limiarLuminancia").oninput = (e) =>
+            document.getElementById("valorLuminancia").textContent = e.target.value;
+        document.getElementById("limiarSaturacao").oninput = (e) =>
+            document.getElementById("valorSaturacao").textContent = e.target.value;
+        document.getElementById("direcoesInterior").oninput = (e) =>
+            document.getElementById("valorDirecoes").textContent = e.target.value;
+        document.getElementById("raioInterior").oninput = (e) =>
+            document.getElementById("valorRaio").textContent = e.target.value;
+        document.getElementById("qualSheet").onchange = (e) => {
+            NOME = e.target.value;
+            animacao.frame = 0;
+            animacao.timer = 0;
+            if (BANCO_DE_SPRITES[NOME].pronta) aoFicarPronta();
+            else esperarSprite();
+        };
+        document.getElementById("velocidade").oninput = (e) => {
+            animacao.frameDuration = Number(e.target.value);
+            document.getElementById("valorVelocidade").textContent = e.target.value;
+        };
+
+        document.getElementById("reprocessar").onclick = () => {
+            Object.entries(controles).forEach(([idDoControle, chave]) => {
+                AJUSTES_DO_FUNDO[chave] = Number(document.getElementById(idDoControle).value);
+            });
+            AJUSTES_DO_FUNDO.suavizarBordas = document.getElementById("suavizar").checked;
+
+            const sprite = BANCO_DE_SPRITES[NOME];
+            sprite.pronta = false;
+            sprite.telaProcessada = null;
+            prepararSprite(NOME, sprite);
+
+            aoFicarPronta();
+        };
+
+        esperarSprite();
+    </script>
+
+</body>
+
+</html>

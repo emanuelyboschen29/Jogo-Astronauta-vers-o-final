@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>A Última Galáxia</title>
+
+    <!--
+        O CSS fica AQUI, dentro do próprio HTML, de propósito: antes ele vinha de
+        ../css/astronauta.css e, quando esse arquivo não carregava (caminho, servidor,
+        cache...), as telas de "Fase concluída" e "Você foi derrotado" apareciam soltas
+        embaixo do jogo. Assim o visual não depende de mais nenhum arquivo.
+    -->
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            height: 100%;
+        }
+
+        body {
+            overflow: hidden;
+            background: #000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: system-ui, "Segoe UI", sans-serif;
+        }
+
+        /* Tudo que tem o atributo "hidden" some, mesmo que outra regra tente mostrar. */
+        [hidden] {
+            display: none !important;
+        }
+
+        /* A caixa do jogo mantém 16:9 e cabe na janela na largura E na altura. */
+        #game-board {
+            position: relative;
+            width: min(960px, 100vw, calc(100vh * 16 / 9));
+        }
+
+        #gameCanvas {
+            display: block;
+            width: 100%;
+            height: auto;
+            background: #050014;
+            border-radius: 10px;
+            box-shadow: 0 0 50px rgba(0, 0, 0, 0.6);
+        }
+
+        /* ---------- Telas por cima do jogo (fase concluída, vitória, derrota) ---------- */
+
+        .tela-overlay {
+            position: absolute;
+            inset: 0;
+            background: rgba(5, 0, 20, 0.86);
+            color: #fff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 14px;
+            padding: 24px;
+            text-align: center;
+            border-radius: 10px;
+        }
+
+        .tela-overlay.escondida {
+            display: none;
+        }
+
+        .tela-overlay h1 {
+            font-size: clamp(24px, 4.2vw, 40px);
+            letter-spacing: 0.02em;
+        }
+
+        .tela-overlay p {
+            max-width: 560px;
+            line-height: 1.45;
+            color: rgba(255, 255, 255, 0.86);
+        }
+
+        .tela-overlay .resumo {
+            color: #9fe6ff;
+            font-size: 14px;
+        }
+
+        .tela-overlay .proxima {
+            color: #c9b6ff;
+            font-size: 14px;
+        }
+
+        .tela-overlay .acoes {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 12px;
+        }
+
+        .tela-overlay button {
+            padding: 10px 24px;
+            font-size: 16px;
+            border: none;
+            border-radius: 6px;
+            background: #7dd3fc;
+            color: #041428;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        .tela-overlay button:hover {
+            background: #38bdf8;
+        }
+
+        .tela-overlay button.secundario {
+            background: transparent;
+            color: #cfe9ff;
+            border: 1px solid rgba(207, 233, 255, 0.45);
+        }
+
+        .tela-overlay button.secundario:hover {
+            background: rgba(207, 233, 255, 0.12);
+        }
+
+        /* ---------- Legenda dos controles ---------- */
+
+        #instrucoes {
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            max-width: calc(100% - 20px);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            color: rgba(255, 255, 255, 0.75);
+            font-size: 13px;
+            background: rgba(0, 0, 0, 0.4);
+            padding: 5px 14px;
+            border-radius: 20px;
+            white-space: nowrap;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="game-board">
+        <canvas id="gameCanvas" width="960" height="540"></canvas>
+
+        <!-- Todas as telas começam escondidas (classe "escondida" + atributo "hidden").
+             O jogo.js mostra a certa na hora certa. -->
+
+        <!-- Fim da Fase 1: aparece depois de entrar no portal -->
+        <div id="tela-fase-concluida" class="tela-overlay escondida" hidden>
+            <h1 id="fase-concluida-titulo">Fase 1 concluída</h1>
+            <p id="fase-concluida-descricao">O astronauta atravessou o campo de aliens e chegou ao portal.</p>
+            <p id="resumo-fase" class="resumo"></p>
+            <p id="fase-concluida-proxima" class="proxima"></p>
+            <button id="botao-proxima-fase" data-principal onclick="continuarParaProximaFase()">Ir para a Fase 2</button>
+        </div>
+
+        <!-- Fim da Fase 2: o Mecha caiu e o astronauta entrou no portal final -->
+        <div id="tela-vitoria" class="tela-overlay escondida" hidden>
+            <h1>Missão cumprida</h1>
+            <p id="vitoria-descricao">O astronauta atravessou o campo de aliens e derrotou o Mecha guardião.</p>
+            <p id="resumo-vitoria" class="resumo"></p>
+            <button data-principal onclick="reiniciarJogo()">Jogar novamente</button>
+        </div>
+
+        <div id="tela-derrota" class="tela-overlay escondida" hidden>
+            <h1>Você foi derrotado</h1>
+            <p>Os aliens dominaram o setor. Tente de novo.</p>
+            <p id="derrota-fase" class="proxima"></p>
+            <div class="acoes">
+                <button data-principal onclick="reiniciarFase()">Tentar novamente</button>
+                <button id="botao-recomecar" class="secundario" onclick="reiniciarJogo()" hidden>Recomeçar do início</button>
+            </div>
+        </div>
+
+        <div id="instrucoes">
+            <span><b>← →</b> mover</span>
+            <span><b>↑ / espaço</b> pular</span>
+            <span><b>↓</b> descer da plataforma</span>
+            <span><b>X</b> atacar</span>
+            <span><b>Shift</b> sprint</span>
+            <span><b>M</b> som</span>
+            <span><b>R</b> reiniciar fase</span>
+        </div>
+    </div>
+
+    <script src="../js/audio.js"></script>
+    <script src="../js/efeitos.js"></script>
+    <script src="../js/sprites.js"></script>
+    <script src="../js/cenario-fase.js"></script>
+    <script src="../js/astronauta.js"></script>
+    <script src="../js/fases.js"></script>
+    <script src="../js/chefe.js"></script>
+    <!-- jogo.js SEMPRE por último: ele liga o loop e precisa de todos os anteriores prontos. -->
+    <script src="../js/jogo.js"></script>
+
+</body>
+
+</html>
